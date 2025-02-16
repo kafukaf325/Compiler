@@ -9,7 +9,13 @@ import org.qogir.simulation.scanner.Scanner;
 public class ScannerTest {
     public static void main(String[] args) {
 
-        String[] regexes = new String[]{"regex2 := c(a|b)*"};//{"regex0 := c(a|b)*"};//{"regex2 := a|1","regex1 := ","regex3 := a)","regex4 := a**","regex5 := a|"};//{"regex2 := a|1","regex1 := ","regex3 := a)","regex4 := a**","regex5 := a|"};//{"regex0 := a|ε","regex1 := ab"};//{"regex0 := a|ε","regex1 := c(a|b)*"};//{"regex0 := abc"};//{"regex1 := c(a|b)*"};//"regex1 := c(a|b)*","regex2 := d(f|ea*(g|h))b","c(a|b)*","a|b", "ab*", "d(f|e)","d(f|ea*(g|h))b","c(a|b)*"
+        String[] regexes = new String[]{"regex2 := c(a|b)*"};
+        //{"regex0 := c(a|b)*"};
+        // {"regex2 := a|1","regex1 := ","regex3 := a)","regex4 := a**","regex5 := a|"};
+        // {"regex0 := a|ε","regex1 := ab"};//{"regex0 := a|ε","regex1 := c(a|b)*"};
+        // {"regex0 := abc"};
+        // {"regex1 := c(a|b)*"};
+        // "regex1 := c(a|b)*","regex2 := d(f|ea*(g|h))b","c(a|b)*","a|b", "ab*", "d(f|e)","d(f|ea*(g|h))b","c(a|b)*"
 
         //test defining a regular grammar
         RegularGrammar rg = new RegularGrammar(regexes);
@@ -32,7 +38,7 @@ public class ScannerTest {
         //test constructing the DFA
 
         RDFA DFA = scanner.constructDFA(NFA);
-        System.out.println(DFA.StateMappingBetweenDFAAndNFAToString() + "\n" + DFA.toString());
+        System.out.println(DFA.StateMappingBetweenDFAAndNFAToString() + "\n" + DFA);
 
         System.out.println("Show the miniDFA:");
         //test minimizing the DFA

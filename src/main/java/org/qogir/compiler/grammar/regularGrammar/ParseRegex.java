@@ -1,5 +1,8 @@
 package org.qogir.compiler.grammar.regularGrammar;
 
+import org.qogir.compiler.util.CharTypeConstant;
+import org.qogir.compiler.util.ExceptionConstant;
+
 import java.util.ArrayDeque;
 import java.util.Stack;
 
@@ -11,7 +14,7 @@ import java.util.Stack;
 public class ParseRegex {//这个类用于把表达式转树
     private ArrayDeque<Character> queue = new ArrayDeque<>();
 
-    private String name = new String();
+    private String name = "";
     /**
      * Construct a ParseRegex object with a regex.
      * The input string of regex is divided into a sequence of char
@@ -28,6 +31,148 @@ public class ParseRegex {//这个类用于把表达式转树
         this.queue.add('%');
 
         name = regex.getName();
+    }
+
+    private boolean kleeneClosureMerge(Stack<RegexTreeNode> stack) {
+        RegexTreeNode knode;
+        int peekType = stack.peek().getType();
+        if(peekType == CharTypeConstant.CHAR_BASIC){// is basic before *
+            knode = new RegexTreeNode('*',CharTypeConstant.CHAR_KLEENE_CLOSURE,stack.pop(),null);
+        }
+        else if(peekType == CharTypeConstant.CHAR_RIGHT_PARENTHESIS){ //is a ')' before *
+            stack.pop(); //pop ')'
+            knode = new RegexTreeNode('*',CharTypeConstant.CHAR_KLEENE_CLOSURE,stack.pop(),null);
+            stack.pop(); //pop '('
+        }else{ //is other char before *, not legal
+            return false;
+        }
+        stack.push(knode);
+        return true;
+    }
+    private Stack<RegexTreeNode> parenthesis2Stack(Stack<RegexTreeNode> stack) {
+        Stack<RegexTreeNode> rstack = new Stack<>();
+        while(!stack.isEmpty() && stack.peek().getType() != CharTypeConstant.CHAR_LEFT_PARENTHESIS){
+            if( stack.peek().getType() == CharTypeConstant.CHAR_BASIC
+                    || stack.peek().getType() == CharTypeConstant.CHAR_CONCATENATION
+                    || stack.peek().getType() == CharTypeConstant.CHAR_KLEENE_CLOSURE){
+                //basic,kleene or concatenation(the case of conca exist?)
+                rstack.push(stack.pop());
+            }
+            else if(stack.peek().getType() == CharTypeConstant.CHAR_UNION){//union, case (stack|?)
+                if(rstack.isEmpty()){ //case (stack|)
+                    return null;
+                }
+                // case (?|...)
+                RegexTreeNode unode = stack.pop();
+                if(rstack.size() > 1){ //case (stack|...)
+                    RegexTreeNode cnode = new RegexTreeNode('-',CharTypeConstant.CHAR_CONCATENATION,null,null);
+                    cnode = mergeStackAsOneChild(cnode,rstack);//
+                    unode.getLastChild().setNextSibling(cnode);
+                }else{ //size = 1, case (stack|.)
+                    unode.getLastChild().setNextSibling(rstack.pop());
+                }
+                rstack.push(unode);
+
+            }
+            else if(stack.peek().getType() == CharTypeConstant.CHAR_RIGHT_PARENTHESIS){ //case ...(stack))
+                stack.pop(); //pop ')'
+                rstack.push(stack.pop());
+                stack.pop(); // pop '('
+            }
+        }
+        return rstack;
+    }
+    private boolean unionMerge(Stack<RegexTreeNode> stack) {
+        RegexTreeNode unode;
+        Stack<RegexTreeNode> ustack = new Stack<>();
+        while(!stack.isEmpty()
+                && stack.peek().getType() != CharTypeConstant.CHAR_UNION
+                && stack.peek().getType() != CharTypeConstant.CHAR_LEFT_PARENTHESIS ){
+            ustack.push(stack.pop());
+        }
+
+        if(stack.isEmpty() || stack.peek().getType() == CharTypeConstant.CHAR_LEFT_PARENTHESIS){
+            unode = new RegexTreeNode('|',CharTypeConstant.CHAR_UNION,null,null);
+            RegexTreeNode firstChildNode;
+            if(ustack.size() == 1){
+                firstChildNode = ustack.pop();
+            }
+            else if(ustack.size() > 1){
+                RegexTreeNode cnode = new RegexTreeNode('-',CharTypeConstant.CHAR_CONCATENATION,null,null);
+                cnode = mergeStackAsOneChild(cnode,ustack);
+                firstChildNode = cnode;
+            }
+            else{
+                return false;
+            }
+            unode.setFirstChild(firstChildNode);
+        }
+        else{ //type=2
+            unode = stack.pop();
+            RegexTreeNode lastNode = unode.getLastChild();
+            if(ustack.size() == 1){
+                lastNode.setNextSibling(ustack.pop());
+            }
+            else{
+                RegexTreeNode cnode = new RegexTreeNode('-',CharTypeConstant.CHAR_CONCATENATION,null,null);
+                cnode = mergeStackAsOneChild(cnode,ustack);
+                lastNode.setNextSibling(cnode);
+            }
+        }
+        stack.push(unode);
+        return true;
+    }
+    private void parenthesisMerge(Stack<RegexTreeNode> stack, Stack<RegexTreeNode> rstack) {
+        // 1) convert the nodes in rstack into one node
+        // 2) push the converted node and the right-parenthesis node
+        if(!rstack.isEmpty()){
+            if(rstack.size() > 1){
+                RegexTreeNode cnode = new RegexTreeNode('-',CharTypeConstant.CHAR_CONCATENATION,null,null);
+                cnode = mergeStackAsOneChild(cnode,rstack);
+                stack.push(cnode);
+
+            }else{ //rstack.size = 1
+                stack.push(rstack.pop());
+            }
+            RegexTreeNode rnode = new RegexTreeNode(')',CharTypeConstant.CHAR_RIGHT_PARENTHESIS,null,null);
+            stack.push(rnode);
+        }
+        else {
+            stack.pop();
+        }
+    }
+
+    private void removeParenthesis(Stack<RegexTreeNode> stack) {
+        // 下一步：处理括号
+        Stack<RegexTreeNode> pstack = new Stack<>();
+        while(!stack.isEmpty() && stack.peek().getType() != CharTypeConstant.CHAR_UNION){
+            pstack.push(stack.pop());
+        }
+
+        if(stack.isEmpty()){
+            while(!pstack.isEmpty())
+                stack.push(pstack.pop());
+        }
+        else if(stack.peek().getType() == CharTypeConstant.CHAR_UNION){
+            if(pstack.peek().getType() == CharTypeConstant.CHAR_RIGHT_PARENTHESIS){
+                while(!pstack.isEmpty()){
+                    stack.push(pstack.pop());
+                }
+            }
+            else{
+                RegexTreeNode unode;
+                unode = stack.pop();
+                if(pstack.size() == 1){
+                    unode.getLastChild().setNextSibling(pstack.pop());
+                }
+                else{
+                    RegexTreeNode cnode = new RegexTreeNode('-',CharTypeConstant.CHAR_CONCATENATION,null,null);
+                    cnode = mergeStackAsOneChild(cnode,pstack);
+                    unode.getLastChild().setNextSibling(cnode);
+                }
+                stack.push(unode);
+            }
+        }
     }
 
     /**
@@ -48,174 +193,91 @@ public class ParseRegex {//这个类用于把表达式转树
         if(this.queue.isEmpty())
             return null;
 
-        RegexTree tree = new RegexTree();
-
         Stack<RegexTreeNode> stack = new Stack<>();
         //lookahead char
         char look = this.queue.poll();
 
         if(look == '%'){
-            System.out.println(name + ":a NULL regex!");
+            System.out.println(name + ExceptionConstant.NULL_ERROR);
             return null;
         }
         else if(!Character.isLetter(look) &&  look != '('){ //look != 'ε' &&
             //The first char must be a letter, ε or '('
-            System.out.println(name + ":not a legal regex!(It must begin with a letter,ε or (.)");
+            System.out.println(name + ExceptionConstant.BEGIN_CHAR_ERROR);
             return null;
         }
 
+        // 手动取出第一个符号，进行后续的判断
         int t;
         if(Character.isLetter(look) || look == 'ε')
-            t=0;
-        else t=4;
-        RegexTreeNode node = new RegexTreeNode(look,t,null,null);
+            t= CharTypeConstant.CHAR_BASIC;
+        else
+            t=CharTypeConstant.CHAR_LEFT_PARENTHESIS;
+
+        RegexTreeNode node = new RegexTreeNode(look, t, null, null);
         stack.push(node);
 
         look = this.queue.poll();
         while(look != '%'){
             if(look == '*'){
-                RegexTreeNode knode;
-                t = stack.peek().getType();
-                if(t == 0){// is basic before *
-                    knode = new RegexTreeNode('*',3,stack.pop(),null);
-                }
-                else if(t == 5){ //is a ')' before *
-                    stack.pop(); //pop ')'
-                    knode = new RegexTreeNode('*',3,stack.pop(),null);
-                    stack.pop(); //pop '('
-                }else{ //is other char before *, not legal
-                    System.out.println(name + ":not a legal regex!(It must be ')' or basic");
+                boolean closureMergeResult = kleeneClosureMerge(stack);
+                if(!closureMergeResult) {
+                    System.out.println(name + ExceptionConstant.PRE_KLEENE_CHAR_ERROR);
                     return null;
                 }
-                stack.push(knode);
             }
             else if(look == '(') {
-                RegexTreeNode lnode = new RegexTreeNode('(', 4, null, null);
+                RegexTreeNode lnode = new RegexTreeNode('(', CharTypeConstant.CHAR_LEFT_PARENTHESIS, null, null);
                 stack.push(lnode);
                 //how about the case of "...(..." (right parenthesis is missing)这里是不是没有做？
             }
             else if(look == ')'){
                 if(stack.isEmpty()){
+                    System.out.println(name + ExceptionConstant.LEFT_PARENTHESIS_MISSING_ERROR);
                     return null;
                 }
 
-                //t = stack.peek().getType();
-                if(stack.peek().getType() == 4 ){ // case: ()
+                if(stack.peek().getType() == CharTypeConstant.CHAR_LEFT_PARENTHESIS){ // case: ()
                     stack.pop();
                 }
                 else{
-                    Stack<RegexTreeNode> rstack = new Stack<>();
-
-                    while(!stack.isEmpty() && stack.peek().getType() != 4){
-                        if( stack.peek().getType() == 0 || stack.peek().getType() == 1 || stack.peek().getType() == 3){//basic,kleene or concatenation(the case of conca exist?)
-                            rstack.push(stack.pop());
-                        }
-                        else if(stack.peek().getType() == 2){//union, case (stack|?)
-                            if(rstack.size() == 0){ //case (stack|)
-                                System.out.println(name + ":not a legal regex '|)'");
-                                return null;
-                            }
-
-                            // case (?|...)
-                            RegexTreeNode unode = stack.pop();
-                            if(rstack.size()>1){ //case (stack|...)
-                                RegexTreeNode cnode = new RegexTreeNode('-',1,null,null);
-                                cnode = mergeStackAsOneChild(cnode,rstack);//
-                                unode.getLastChild().setNextSibling(cnode);
-                            }else{ //size = 1, case (stack|.)
-                                unode.getLastChild().setNextSibling(rstack.pop());
-                            }
-                            rstack.push(unode);
-
-                        }
-                        else if(stack.peek().getType() == 5){ //case ...(stack))
-                            stack.pop(); //pop ')'
-                            rstack.push(stack.pop());
-                            stack.pop(); // pop '('
-                        }
-                    }
-
-                    if(stack.isEmpty()){
-                        System.out.println(name + ":not a legal regex ('(' is missing.)");
+                    Stack<RegexTreeNode> rstack = parenthesis2Stack(stack);
+                    if(rstack == null) {
+                        System.out.println(name + ExceptionConstant.UNION_RIGHT_PARENTHESIS_ERROR);
                         return null;
                     }
-                    else if(stack.peek().getType()==4){ //case (rstack)
-                        // 1) convert the nodes in rstack into one node
-                        // 2) push the converted node and the right-parenthesis node
-                        if(!rstack.isEmpty()){
-                            if(rstack.size()>1){
-                                RegexTreeNode cnode = new RegexTreeNode('-',1,null,null);
-                                cnode = mergeStackAsOneChild(cnode,rstack);
-                                stack.push(cnode);
-
-                            }else{ //rstack.size = 1
-                                stack.push(rstack.pop());
-                            }
-                            RegexTreeNode rnode = new RegexTreeNode(')',5,null,null);
-                            stack.push(rnode);
-                        }
-                        else {
-                            stack.pop();
-                        }
+                    if(stack.isEmpty()){
+                        System.out.println(name + ExceptionConstant.LEFT_PARENTHESIS_MISSING_ERROR);
+                        return null;
+                    }
+                    else if(stack.peek().getType() == CharTypeConstant.CHAR_LEFT_PARENTHESIS){ //case (rstack)
+                        parenthesisMerge(stack, rstack);
                     }
                 }
             }
-
             //0-basic；1-concatenation；2-union； 3-kleene closure; 4-leftParenthesis; 5-rightParenthesis
             else if(look == '|'){
                 if(this.queue.peek() == '%'){
-                    System.out.println(name + ":not a legal regex.| Missing element on the right side.");
+                    System.out.println(name + ExceptionConstant.UNION_RIGHT_MISSING_ERROR);
                     return null;
                 }
                 t = stack.peek().getType();
-                if(t == 4 || t == 2){
-                    System.out.println(name + ":not a legal regex('(| or ||').");
+                if(t == CharTypeConstant.CHAR_LEFT_PARENTHESIS || t == CharTypeConstant.CHAR_UNION){
+                    System.out.println(name + ExceptionConstant.UNION_LEFT_ERROR);
                     return null;
                 }
-
-                RegexTreeNode unode;
-                Stack<RegexTreeNode> ustack = new Stack<>();
-                while(!stack.isEmpty() && stack.peek().getType() != 2 && stack.peek().getType() != 4 ){
-                    ustack.push(stack.pop());
+                boolean unionMergeResult = unionMerge(stack);
+                if(!unionMergeResult) {
+                    System.out.println(name + ExceptionConstant.UNION_LEFT_MISSING_ERROR);
+                    return null;
                 }
-
-                if(stack.isEmpty() || stack.peek().getType() == 4){
-                    unode = new RegexTreeNode('|',2,null,null);
-                    RegexTreeNode firstChildNode;
-                    if(ustack.size() == 1){
-                        firstChildNode = ustack.pop();
-                    }
-                    else if(ustack.size() > 1){
-                        RegexTreeNode cnode = new RegexTreeNode('-',1,null,null);
-                        cnode = mergeStackAsOneChild(cnode,ustack);
-                        firstChildNode = cnode;
-                    }
-                    else{
-                        System.out.println(name + ":not a legal regex(in considering look='|').");
-                        return null;
-                    }
-                    unode.setFirstChild(firstChildNode);
-                }
-                else{ //type=2
-                    unode = stack.pop();
-                    RegexTreeNode lastNode = unode.getLastChild();
-                    if(ustack.size() == 1){
-                        lastNode.setNextSibling(ustack.pop());
-                    }
-                    else{
-                        RegexTreeNode cnode = new RegexTreeNode('-',1,null,null);
-                        cnode = mergeStackAsOneChild(cnode,ustack);
-                        lastNode.setNextSibling(cnode);
-                    }
-                }
-                stack.push(unode);
             }
             else if(Character.isLetter(look) || look == 'ε'){
-                RegexTreeNode bnode = new RegexTreeNode(look,0,null,null);
+                RegexTreeNode bnode = new RegexTreeNode(look,CharTypeConstant.CHAR_BASIC,null,null);
                 stack.push(bnode);
             }
             else{
-                System.out.println(name + ":You entered illegal characters:" + look);
+                System.out.println(name + ExceptionConstant.ILLEGAL_CHAR + look);
                 return null;
             }
 
@@ -226,40 +288,12 @@ public class ParseRegex {//这个类用于把表达式转树
         if(stack.isEmpty()){
             return null;
         }
-        Stack<RegexTreeNode> pstack = new Stack<>();
-        while(!stack.isEmpty() && stack.peek().getType() != 2){
-            pstack.push(stack.pop());
-        }
-
-        if(stack.isEmpty()){
-            while(!pstack.isEmpty())
-                stack.push(pstack.pop());
-        }
-        else if(stack.peek().getType() == 2){
-            if(pstack.peek().getType() == 5){
-                while(!pstack.isEmpty()){
-                    stack.push(pstack.pop());
-                }
-            }
-            else{
-                RegexTreeNode unode;
-                unode = stack.pop();
-                if(pstack.size() == 1){
-                    unode.getLastChild().setNextSibling(pstack.pop());
-                }
-                else{
-                    RegexTreeNode cnode = new RegexTreeNode('-',1,null,null);
-                    cnode = mergeStackAsOneChild(cnode,pstack);
-                    unode.getLastChild().setNextSibling(cnode);
-                }
-                stack.push(unode);
-            }
-        }
+        removeParenthesis(stack);
 
         // merge the nodes in stack as one node
         Stack<RegexTreeNode> treeStack = new Stack<>();
         while(!stack.isEmpty()){
-            if(stack.peek().getType() == 4 || stack.peek().getType() == 5){
+            if(stack.peek().getType() == CharTypeConstant.CHAR_LEFT_PARENTHESIS || stack.peek().getType() == CharTypeConstant.CHAR_RIGHT_PARENTHESIS){
                 stack.pop();
             }
             else
@@ -270,8 +304,9 @@ public class ParseRegex {//这个类用于把表达式转树
             return null;
         }
 
-        if(treeStack.size()>1){
-            RegexTreeNode treeNode = new RegexTreeNode('-',1,null,null);
+        RegexTree tree = new RegexTree();
+        if(treeStack.size() > 1){
+            RegexTreeNode treeNode = new RegexTreeNode('-',CharTypeConstant.CHAR_CONCATENATION,null,null);
             treeNode = mergeStackAsOneChild(treeNode,treeStack);
             tree.setRoot(treeNode);
         }
